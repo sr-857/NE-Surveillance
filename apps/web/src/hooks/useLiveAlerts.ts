@@ -12,47 +12,13 @@ import { useAuthStore } from '../store/authStore';
 export function useLiveAlerts(): void {
   const queryClient = useQueryClient();
   const accessToken = useAuthStore((s) => s.accessToken);
-  const wsRef = useRef<WebSocket | null>(null);
-  const retryDelayRef = useRef(1000);
-
   useEffect(() => {
-    let cancelled = false;
+    // WebSockets were removed for serverless compatibility.
+    // Fallback to aggressive 30-second polling to ensure the dashboard remains semi-live.
+    const interval = setInterval(() => {
+      void queryClient.invalidateQueries({ queryKey: ['alerts'] });
+    }, 30000);
 
-    function connect(): void {
-      if (cancelled) return;
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const url = `${protocol}//${window.location.host}/ws${accessToken ? `?token=${accessToken}` : ''}`;
-      const ws = new WebSocket(url);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        retryDelayRef.current = 1000; // reset backoff on a successful connection
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data as string) as { type: string };
-          if (msg.type === 'alert.new') {
-            void queryClient.invalidateQueries({ queryKey: ['alerts'] });
-          }
-        } catch {
-          // ignore malformed frames
-        }
-      };
-
-      ws.onclose = () => {
-        if (cancelled) return;
-        // Exponential backoff, capped at 30s, so a server restart doesn't
-        // get hammered by every connected client reconnecting simultaneously.
-        setTimeout(connect, retryDelayRef.current);
-        retryDelayRef.current = Math.min(retryDelayRef.current * 2, 30000);
-      };
-    }
-
-    connect();
-    return () => {
-      cancelled = true;
-      wsRef.current?.close();
-    };
-  }, [accessToken, queryClient]);
+    return () => clearInterval(interval);
+  }, [queryClient]);
 }

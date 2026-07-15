@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { validate } from '../../middleware/validate';
 import { prisma } from '../../lib/prisma';
 import { decryptSecret } from '../../lib/crypto';
-import { webhookIngestQueue } from '../../jobs/queue';
+import { processInboundWebhook } from './webhook.processor';
 import { ApiError } from '../../lib/apiError';
 
 export const webhookRouter = Router();
@@ -17,9 +17,7 @@ const keyParam = z.object({ key: z.string().min(1).max(64) });
  * the integration's configured apiKey as the secret, sent as `X-Signature`
  * (hex-encoded). Payload shape: see webhook.processor.ts's zod schema.
  *
- * Returns 202 immediately — actual validation/upsert happens in the BullMQ
- * worker (webhook.processor.ts) so a slow DB write never holds the caller's
- * connection open, and transient failures retry automatically.
+ * Runs synchronously in serverless context.
  */
 webhookRouter.post('/:key', validate({ params: keyParam }), async (req, res, next) => {
   try {
@@ -40,13 +38,13 @@ webhookRouter.post('/:key', validate({ params: keyParam }), async (req, res, nex
     const valid = sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf);
     if (!valid) throw new ApiError(401, 'INVALID_SIGNATURE', 'Signature verification failed');
 
-    await webhookIngestQueue.add('ingest', {
+    await processInboundWebhook({
       integrationKey: req.params.key,
       rawPayload: req.body,
       receivedAt: new Date().toISOString(),
     });
 
-    res.status(202).json({ accepted: true });
+    res.status(200).json({ accepted: true });
   } catch (err) {
     next(err);
   }

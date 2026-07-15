@@ -2,9 +2,12 @@ import { z } from 'zod';
 import { HazardType, Severity, AlertSourceType } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../lib/logger';
-import type { WebhookIngestJobData } from '../../jobs/queue';
-import { redisPub } from '../../lib/redis';
-import { ALERTS_CHANNEL } from './alerts.service';
+
+export interface WebhookIngestJobData {
+  integrationKey: string;
+  rawPayload: unknown;
+  receivedAt: string;
+}
 
 const webhookPayloadSchema = z.object({
   id: z.string().min(1),
@@ -19,9 +22,7 @@ const webhookPayloadSchema = z.object({
 });
 
 /**
- * Runs inside the BullMQ worker (see server.ts), not on the request thread —
- * the webhook route validates the signature and enqueues, then returns 202
- * immediately so a slow DB write never holds a partner's HTTP client open.
+ * Runs synchronously in serverless context.
  */
 export async function processInboundWebhook(job: WebhookIngestJobData): Promise<void> {
   const parsed = webhookPayloadSchema.safeParse(job.rawPayload);
@@ -30,7 +31,7 @@ export async function processInboundWebhook(job: WebhookIngestJobData): Promise<
       { integrationKey: job.integrationKey, errors: parsed.error.flatten() },
       'rejected malformed webhook payload',
     );
-    return; // don't retry — the payload is structurally invalid, retrying won't help
+    return;
   }
   const item = parsed.data;
 
@@ -44,7 +45,7 @@ export async function processInboundWebhook(job: WebhookIngestJobData): Promise<
     where: { integrationKey: job.integrationKey },
   });
 
-  const alert = await prisma.alert.upsert({
+  await prisma.alert.upsert({
     where: {
       sourceType_sourceName_externalId: {
         sourceType: AlertSourceType.WEBHOOK,
@@ -73,8 +74,4 @@ export async function processInboundWebhook(job: WebhookIngestJobData): Promise<
       expiresAt: item.expiresAt ? new Date(item.expiresAt) : undefined,
     },
   });
-
-  await redisPub.publish(ALERTS_CHANNEL, JSON.stringify(alert)).catch((err) =>
-    logger.warn({ err }, 'failed to publish webhook-sourced alert'),
-  );
 }
