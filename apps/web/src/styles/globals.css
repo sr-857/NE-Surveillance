@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 255 255 255;
+  --bg-elevated: 248 250 251;
+  --text: 15 23 26;
+  --text-muted: 100 116 122;
+  --border: 226 232 234;
+}
+
+.dark {
+  --bg: 11 15 18;
+  --bg-elevated: 17 22 26;
+  --text: 232 246 246;
+  --text-muted: 143 163 168;
+  --border: 30 40 44;
+}
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+  body {
+    background-color: rgb(var(--bg));
+    color: rgb(var(--text));
+    @apply font-sans transition-colors duration-200;
+  }
+
+  /* Accessible focus ring — never remove focus-visible outlines (WCAG 2.2 AA). */
+  :focus-visible {
+    outline: 2px solid theme('colors.brand.400');
+    outline-offset: 2px;
+  }
+
+  /* Respect reduced-motion preference for anyone using Framer Motion animations. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+}
