@@ -1,0 +1,253 @@
+// ============================================================
+// Northeast Watch — Database Schema
+// Postgres via Prisma. Run `prisma migrate dev` to generate
+// migrations from this schema (see docs/DEPLOYMENT.md).
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------------
+// Auth / RBAC
+// ------------------------------------------------------------
+
+enum Role {
+  ADMIN     // full access: manage users, integrations, view audit log
+  ANALYST   // can manage watchlists, acknowledge alerts, export data
+  VIEWER    // read-only dashboard access
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  passwordHash  String
+  displayName   String
+  role          Role      @default(VIEWER)
+  isActive      Boolean   @default(true)
+  mfaEnabled    Boolean   @default(false)
+  mfaSecret     String?   // encrypted at rest via app-layer envelope encryption, see lib/crypto.ts
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  refreshTokens RefreshToken[]
+  watchlists    Watchlist[]
+  auditLogs     AuditLog[]
+  ackedAlerts   AlertAcknowledgement[]
+
+  @@index([email])
+  @@map("users")
+}
+
+// Refresh tokens are stored hashed (never plaintext) and rotated on every use.
+// Enables server-side revocation (logout-all, compromised-token response).
+model RefreshToken {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String   @unique
+  family      String   // rotation family id — reuse of a rotated-out token revokes the whole family
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdByIp String?
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([family])
+  @@map("refresh_tokens")
+}
+
+// ------------------------------------------------------------
+// Watchlists
+// ------------------------------------------------------------
+
+model Watchlist {
+  id        String          @id @default(uuid())
+  userId    String
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String          @default("My Watchlist")
+  createdAt DateTime        @default(now())
+  items     WatchlistItem[]
+
+  @@index([userId])
+  @@map("watchlists")
+}
+
+model WatchlistItem {
+  id            String    @id @default(uuid())
+  watchlistId   String
+  watchlist     Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+  regionType    RegionType
+  regionCode    String    // e.g. "ASM" (state) or district id
+  createdAt     DateTime  @default(now())
+
+  @@unique([watchlistId, regionType, regionCode])
+  @@map("watchlist_items")
+}
+
+enum RegionType {
+  STATE
+  DISTRICT
+}
+
+// ------------------------------------------------------------
+// Regions (reference data — seeded, not user-editable via API)
+// ------------------------------------------------------------
+
+model Region {
+  code        String     @id // e.g. "ASM", or "ASM-DIBRUGARH" for districts
+  name        String
+  type        RegionType
+  parentCode  String?    // districts reference their state's code
+  lat         Float
+  lon         Float
+  createdAt   DateTime   @default(now())
+
+  alerts           Alert[]
+  weatherSnapshots WeatherSnapshot[]
+
+  @@index([type])
+  @@map("regions")
+}
+
+// ------------------------------------------------------------
+// Alerts — unified table across all hazard sources
+// ------------------------------------------------------------
+
+enum HazardType {
+  EARTHQUAKE
+  FLOOD
+  LANDSLIDE
+  SEVERE_WEATHER
+  ROAD_CLOSURE
+  POWER_OUTAGE
+  PUBLIC_HEALTH
+  GOVERNMENT_NOTICE
+}
+
+enum Severity {
+  ADVISORY
+  WARNING
+  SEVERE
+}
+
+enum AlertSourceType {
+  LIVE_API      // ingested automatically from an external live source (e.g. USGS)
+  MANUAL_ENTRY  // entered by an authenticated ANALYST/ADMIN via the dashboard
+  WEBHOOK       // pushed in by an official integration partner via signed webhook
+}
+
+// Every alert must declare where it came from and when it was last verified,
+// per the "label source + timestamp" requirement — the UI is contractually
+// bound to render these fields, they are NOT optional at the schema level.
+model Alert {
+  id             String          @id @default(uuid())
+  hazardType     HazardType
+  severity       Severity
+  regionCode     String
+  region         Region          @relation(fields: [regionCode], references: [code])
+  title          String
+  description    String
+  sourceType     AlertSourceType
+  sourceName     String          // e.g. "USGS Earthquake Hazards Program", "ASDMA Bulletin #4521"
+  sourceUrl      String?         // link to the original bulletin/advisory, when available
+  externalId     String?         // upstream id for idempotent ingestion (e.g. USGS event id)
+  effectiveAt    DateTime        // when the hazard condition became effective, per the source
+  expiresAt      DateTime?
+  ingestedAt     DateTime        @default(now())
+  createdByUserId String?        // set for MANUAL_ENTRY alerts
+  isActive       Boolean         @default(true)
+
+  acknowledgements AlertAcknowledgement[]
+
+  @@unique([sourceType, sourceName, externalId])
+  @@index([regionCode, isActive])
+  @@index([hazardType, severity])
+  @@index([effectiveAt])
+  @@map("alerts")
+}
+
+model AlertAcknowledgement {
+  id        String   @id @default(uuid())
+  alertId   String
+  alert     Alert    @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@unique([alertId, userId])
+  @@map("alert_acknowledgements")
+}
+
+// ------------------------------------------------------------
+// Weather cache — server-side cache of upstream provider responses.
+// Redis holds the hot path; this table is the durable/queryable
+// history used for trend charts and offline fallback.
+// ------------------------------------------------------------
+
+model WeatherSnapshot {
+  id              String   @id @default(uuid())
+  regionCode      String
+  region          Region   @relation(fields: [regionCode], references: [code])
+  temperatureC    Float
+  precipitationMm Float
+  windKph         Float
+  humidityPct     Int
+  conditionCode   Int
+  fetchedAt       DateTime @default(now())
+  providerName    String   @default("open-meteo")
+
+  @@index([regionCode, fetchedAt])
+  @@map("weather_snapshots")
+}
+
+// ------------------------------------------------------------
+// Integration credentials — for the modules that require a real
+// partner integration (river levels, traffic, power, news RSS,
+// government notices). Values are envelope-encrypted at the
+// application layer (see lib/crypto.ts); this table never stores
+// plaintext secrets. Populate via the admin console, not migrations.
+// ------------------------------------------------------------
+
+model IntegrationCredential {
+  id                String    @id @default(uuid())
+  integrationKey    String    @unique // e.g. "cwc_river_levels", "asdma_bulletins", "apdcl_outages"
+  displayName       String
+  encryptedPayload  String    // JSON blob (api key, endpoint, etc.), envelope-encrypted
+  isConfigured      Boolean   @default(false)
+  lastVerifiedAt    DateTime?
+  updatedByUserId   String?
+  updatedAt         DateTime  @updatedAt
+  createdAt         DateTime  @default(now())
+
+  @@map("integration_credentials")
+}
+
+// ------------------------------------------------------------
+// Audit log — append-only, never updated or deleted by app code.
+// ------------------------------------------------------------
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String   // e.g. "auth.login", "user.role_changed", "integration.credential_updated"
+  targetType String?
+  targetId   String?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
