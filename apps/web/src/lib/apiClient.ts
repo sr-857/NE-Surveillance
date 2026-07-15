@@ -1,6 +1,8 @@
 import { useAuthStore } from '../store/authStore';
 
-const API_BASE = '/api';
+// In production, VITE_API_URL points to the deployed API (e.g. https://northeast-watch-api.vercel.app/api).
+// In local dev, it defaults to /api (same-origin proxy).
+const API_BASE = (import.meta.env.VITE_API_URL as string) || '/api';
 
 export class ApiClientError extends Error {
   constructor(

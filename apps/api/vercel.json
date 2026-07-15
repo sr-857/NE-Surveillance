@@ -1,25 +1,7 @@
 {
   "version": 2,
   "rewrites": [
-    { "source": "/api/auth/:path*", "destination": "/api/auth.ts" },
-    { "source": "/api/weather/:path*", "destination": "/api/weather.ts" },
-    { "source": "/api/alerts/:path*", "destination": "/api/alerts.ts" },
-    { "source": "/api/webhooks/:path*", "destination": "/api/webhooks.ts" },
-    { "source": "/api/admin/integrations/:path*", "destination": "/api/integrations.ts" },
-    { "source": "/api/admin/users/:path*", "destination": "/api/users.ts" },
-    { "source": "/api/watchlists/:path*", "destination": "/api/watchlists.ts" },
-    { "source": "/api/regions/:path*", "destination": "/api/regions.ts" },
-    { "source": "/api/cron/:path*", "destination": "/api/cron.ts" },
-    { "source": "/api/:path*", "destination": "/api/index.ts" }
-  ],
-  "crons": [
-    {
-      "path": "/api/cron/weather",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/alerts",
-      "schedule": "* * * * *"
-    }
+    { "source": "/api/:path*", "destination": "/api/index.ts" },
+    { "source": "/health", "destination": "/api/index.ts" }
   ]
 }

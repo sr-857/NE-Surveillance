@@ -1,6 +1,5 @@
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../lib/logger';
-import { redisPub } from '../../lib/redis';
 import { recordAudit } from '../audit/audit.service';
 import { ApiError } from '../../lib/apiError';
 import { alertAdapters } from './adapters';
@@ -89,11 +88,8 @@ async function upsertAlert(item: NormalizedAlert): Promise<boolean> {
   });
 
   if (!existing) {
-    // New alert — broadcast to connected websocket clients via Redis pub/sub
-    // (works correctly across every horizontally-scaled API instance).
-    await redisPub.publish(ALERTS_CHANNEL, JSON.stringify(alert)).catch((err) =>
-      logger.warn({ err }, 'failed to publish new alert to redis pubsub'),
-    );
+    // New alert — the frontend polls /api/alerts every 30s to pick up new entries.
+    logger.info({ alertId: alert.id }, 'new alert ingested');
     return true;
   }
   return false;
@@ -147,7 +143,7 @@ export async function createManualAlert(
   });
 
   await recordAudit({ userId, action: 'alert.manual_create', targetType: 'alert', targetId: alert.id });
-  await redisPub.publish(ALERTS_CHANNEL, JSON.stringify(alert)).catch(() => undefined);
+  logger.info({ alertId: alert.id }, 'manual alert created');
   return alert;
 }
 

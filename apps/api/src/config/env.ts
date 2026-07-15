@@ -11,7 +11,6 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(4000),
 
   DATABASE_URL: z.string().url().startsWith('postgres'),
-  REDIS_URL: z.string().url().startsWith('redis'),
 
   // Auth
   JWT_ACCESS_SECRET: z.string().min(32, 'JWT_ACCESS_SECRET must be at least 32 chars'),
@@ -32,6 +31,9 @@ const envSchema = z.object({
   // Observability
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   SENTRY_DSN: z.string().url().optional(),
+
+  // Serverless cron protection
+  CRON_SECRET: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
